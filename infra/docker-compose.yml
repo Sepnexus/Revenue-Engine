@@ -22,6 +22,7 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       - ../supabase/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ./db-init/zzz-self-hosted-fixes.sh:/docker-entrypoint-initdb.d/zzz-self-hosted-fixes.sh:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
       interval: 5s
@@ -110,7 +111,7 @@ services:
       - ./kong.yml:/var/lib/kong/kong.yml:ro
 
   studio:
-    image: supabase/studio:20240805-1f9a8e8
+    image: supabase/studio:2026.05.18-sha-f45a608
     restart: unless-stopped
     depends_on:
       - kong
