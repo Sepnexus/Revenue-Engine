@@ -46,11 +46,14 @@ psql:  ## Open a psql shell into the local DB
 
 # ---------- migration ----------
 
-migrate-from-lovable:  ## Dump Lovable Supabase and restore into TARGET (set SOURCE_DB_URL, TARGET_DB_URL)
+migrate-from-lovable:  ## (Direct DB access) Dump Lovable Supabase and restore into TARGET (set SOURCE_DB_URL, TARGET_DB_URL)
 	./scripts/migrate-from-lovable.sh
 
 migrate-from-lovable-dry:  ## Same as above but skip the restore
 	DRY_RUN=1 ./scripts/migrate-from-lovable.sh
+
+restore-from-lovable:  ## (Lovable Cloud) Apply backups/{full-database,auth-users}-export.sql into the local stack
+	./scripts/restore-from-lovable.sh
 
 # ---------- production ----------
 
