@@ -1,0 +1,185 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ── Mobile Responsive Overrides ────────────────────────── */
+@media (max-width: 768px) {
+  /* Landing page */
+  .landing-header { flex-direction: column !important; gap: 12px !important; padding: 16px 20px !important; }
+  .landing-hero { padding: 32px 20px !important; }
+  .landing-hero h1 { font-size: 32px !important; }
+  .landing-features { grid-template-columns: 1fr !important; gap: 14px !important; }
+  .landing-footer { flex-direction: column !important; gap: 10px !important; padding: 16px 20px !important; text-align: center !important; }
+  .landing-hero-buttons { flex-direction: column !important; width: 100% !important; }
+  .landing-hero-buttons a { text-align: center !important; }
+
+  /* Admin header */
+  .admin-header { flex-direction: column !important; gap: 10px !important; padding: 12px 16px !important; align-items: flex-start !important; }
+  .admin-nav { flex-wrap: wrap !important; gap: 6px 12px !important; }
+
+  /* Admin dashboard */
+  .admin-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Admin clients table */
+  .admin-table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
+  .admin-table-wrap table { min-width: 900px !important; }
+
+  /* Client detail */
+  .client-detail-actions { flex-direction: column !important; gap: 6px !important; }
+  .client-detail-grid-2 { grid-template-columns: 1fr !important; }
+  .client-detail-grid-3 { grid-template-columns: 1fr !important; }
+  .client-detail-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+  .client-billing-grid { grid-template-columns: 1fr !important; }
+
+  /* Dashboard header */
+  .dashboard-header { flex-wrap: wrap !important; height: auto !important; padding: 10px 16px !important; gap: 8px !important; }
+  .dashboard-header nav { order: 10 !important; width: 100% !important; justify-content: center !important; }
+  .dashboard-header-actions { order: 5 !important; }
+  .dashboard-brand { flex-shrink: 1 !important; min-width: 0 !important; }
+  .dashboard-brand span:last-child { display: none !important; }
+
+  /* Dashboard grids */
+  .grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+  .grid-5 { grid-template-columns: repeat(2, 1fr) !important; }
+  .grid-3 { grid-template-columns: 1fr !important; }
+  .grid-2 { grid-template-columns: 1fr !important; }
+  .grid-data-entry { grid-template-columns: 1fr !important; }
+  .grid-data-entry-bottom { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Dashboard main content */
+  .dashboard-main { padding: 16px 16px 32px !important; }
+
+  /* AI section */
+  .ai-agent-tabs { flex-wrap: wrap !important; gap: 4px !important; }
+  .ai-agent-tabs button { font-size: 11px !important; padding: 6px 10px !important; }
+  .ai-chat-expanded-header { flex-wrap: wrap !important; gap: 6px !important; }
+  .ai-chat-expanded-agents { flex-wrap: wrap !important; gap: 4px !important; }
+
+  /* Summary chart area */
+  .summary-chart-sidebar { grid-template-columns: 1fr !important; }
+
+  /* History table */
+  .history-table-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
+  .history-table-wrap table { min-width: 700px !important; }
+
+  /* Account grid */
+  .account-cards { grid-template-columns: 1fr !important; }
+
+  /* Banners */
+  .sub-banner { flex-direction: column !important; gap: 8px !important; padding: 10px 16px !important; text-align: center !important; }
+
+  /* Period picker header */
+  .period-locked-badge { display: none !important; }
+
+  /* Red Zone */
+  .red-zone-alert-detail { padding-left: 18px !important; }
+
+  /* Onboarding */
+  .onboarding-steps { flex-direction: column !important; gap: 8px !important; }
+
+  /* Subscription card actions */
+  .sub-actions { flex-direction: column !important; }
+  .sub-actions button { width: 100% !important; }
+}

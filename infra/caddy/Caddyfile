@@ -1,0 +1,26 @@
+# Production reverse proxy with auto TLS via Let's Encrypt.
+# Drop this Caddyfile next to docker-compose.prod.yml on the VPS.
+# Replace yourdomain.com with your real domain.
+
+api.yourdomain.com {
+    encode gzip zstd
+    reverse_proxy kong:8000
+}
+
+app.yourdomain.com {
+    encode gzip zstd
+    root * /srv/web
+    try_files {path} /index.html
+    file_server
+}
+
+# Optional: protect Studio behind basic auth so it isn't on the public internet.
+# Remove this block entirely if you'd rather access Studio over SSH tunnel.
+studio.yourdomain.com {
+    encode gzip zstd
+    basicauth {
+        # generate with: docker run caddy caddy hash-password
+        admin $2a$14$replace-with-bcrypt-hash
+    }
+    reverse_proxy studio:3000
+}
