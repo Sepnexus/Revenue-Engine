@@ -20,8 +20,12 @@ networks:
 
 services:
   # ---- internal services (no Traefik labels, no host ports) ----
+  # `!reset []` forces compose to drop the host port bindings from the
+  # base compose file (a plain `ports: []` MERGES with the base list and
+  # leaves the bindings intact, which collides with whatever else on the
+  # VPS already owns 5432, 8000, etc).
   db:
-    ports: []
+    ports: !reset []
 
   auth: {}
   rest: {}
@@ -33,7 +37,7 @@ services:
 
   # ---- externally routed via Traefik ----
   kong:
-    ports: []
+    ports: !reset []
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=root_default"
@@ -44,7 +48,7 @@ services:
       - "traefik.http.services.re-api.loadbalancer.server.port=8000"
 
   studio:
-    ports: []
+    ports: !reset []
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=root_default"
