@@ -83,9 +83,38 @@ GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA public TO anon, 
 GRANT EXECUTE                        ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
 SQL
 
+echo "==> Backfilling auth.identities (Lovable export omits this; modern GoTrue needs it for password login)"
+EXEC -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+INSERT INTO auth.identities (
+  provider_id, user_id, identity_data, provider,
+  last_sign_in_at, created_at, updated_at
+)
+SELECT
+  u.id::text,
+  u.id,
+  jsonb_build_object(
+    'sub', u.id::text,
+    'email', u.email,
+    'email_verified', true,
+    'phone_verified', false
+  ),
+  'email',
+  u.last_sign_in_at,
+  COALESCE(u.created_at, now()),
+  COALESCE(u.updated_at, now())
+FROM auth.users u
+WHERE u.encrypted_password IS NOT NULL
+  AND length(u.encrypted_password) > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM auth.identities i
+    WHERE i.user_id = u.id AND i.provider = 'email'
+  );
+SQL
+
 echo "==> Row counts:"
 EXEC -At -F $'\t' <<'SQL'
 SELECT 'auth.users',         count(*) FROM auth.users;
+SELECT 'auth.identities',    count(*) FROM auth.identities;
 SELECT 'organizations',      count(*) FROM public.organizations;
 SELECT 'profiles',           count(*) FROM public.profiles;
 SELECT 'user_roles',         count(*) FROM public.user_roles;
