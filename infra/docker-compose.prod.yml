@@ -1,37 +1,79 @@
-# Production overrides. Use together with docker-compose.yml:
+# Production overrides for the VPS (srv844822.hstgr.cloud).
+#
+# Layers on top of docker-compose.yml. Differences from local dev:
+#   - No host ports published; everything is routed by Traefik via hostname.
+#   - Adds a `web` service that builds apps/web and serves it via nginx.
+#   - Joins the external `root_default` network so the existing Traefik
+#     (root-traefik-1) routes to us; nothing else on the VPS is touched.
+#   - Disables the dev mail catcher; expects real SMTP via env.
+#
+# Bring up:
 #   docker compose --env-file infra/.env \
 #     -f infra/docker-compose.yml \
-#     -f infra/docker-compose.prod.yml up -d
+#     -f infra/docker-compose.prod.yml \
+#     up -d --build
+
+networks:
+  default:
+    name: root_default
+    external: true
 
 services:
+  # ---- internal services (no Traefik labels, no host ports) ----
   db:
-    ports: []   # don't expose Postgres on the public internet
+    ports: []
 
-  kong:
-    ports: []   # only reachable via Caddy on the docker network
-
-  studio:
-    ports: []   # ditto
+  auth: {}
+  rest: {}
+  storage: {}
+  meta: {}
 
   inbucket:
-    profiles: ["disabled"]   # use a real SMTP provider in prod
+    profiles: ["disabled"]
 
-  caddy:
-    image: caddy:2.8
+  # ---- externally routed via Traefik ----
+  kong:
+    ports: []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      - "traefik.http.routers.re-api.rule=Host(`${PROD_API_HOST}`)"
+      - "traefik.http.routers.re-api.entrypoints=web,websecure"
+      - "traefik.http.routers.re-api.tls=true"
+      - "traefik.http.routers.re-api.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.re-api.loadbalancer.server.port=8000"
+
+  studio:
+    ports: []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      - "traefik.http.routers.re-studio.rule=Host(`${PROD_STUDIO_HOST}`)"
+      - "traefik.http.routers.re-studio.entrypoints=web,websecure"
+      - "traefik.http.routers.re-studio.tls=true"
+      - "traefik.http.routers.re-studio.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.re-studio.loadbalancer.server.port=3000"
+      # Studio has no built-in auth — gate it behind basic auth.
+      # Generate the hash on the VPS with:
+      #   htpasswd -nbB admin 'your-password'   (apt install apache2-utils)
+      # Then put the full string (escape $ as $$) in STUDIO_BASIC_AUTH in .env.
+      - "traefik.http.middlewares.re-studio-auth.basicauth.users=${STUDIO_BASIC_AUTH:-}"
+      - "traefik.http.routers.re-studio.middlewares=re-studio-auth@docker"
+
+  web:
+    image: revenue-engine-web:latest
+    container_name: revenue-engine-web
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-      - web-dist:/srv/web:ro
-    depends_on:
-      - kong
-      - studio
-
-volumes:
-  caddy-data:
-  caddy-config:
-  web-dist:
+    build:
+      context: ../apps/web
+      args:
+        VITE_SUPABASE_URL: https://${PROD_API_HOST}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      - "traefik.http.routers.re-web.rule=Host(`${PROD_WEB_HOST}`)"
+      - "traefik.http.routers.re-web.entrypoints=web,websecure"
+      - "traefik.http.routers.re-web.tls=true"
+      - "traefik.http.routers.re-web.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.re-web.loadbalancer.server.port=80"
