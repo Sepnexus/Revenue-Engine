@@ -219,6 +219,48 @@ docker compose up -d --build
 # then re-run scripts/restore-from-lovable.sh
 ```
 
+---
+
+## Lovable migration landmines (already fixed in this repo)
+
+These all bit us once during the first migration from Lovable Cloud. The fixes
+are baked into `scripts/restore-from-lovable.sh`, `docker/nginx.conf`, and
+`.env.example`. Documented here so the symptoms are searchable.
+
+1. **`auth.users` import errors on `confirmed_at` column**
+   Lovable's export includes `confirmed_at`, which is a generated column in
+   modern GoTrue. `restore-from-lovable.sh` sed-strips it before importing.
+
+2. **`CREATE POLICY ... TO  USING ...` (empty role list)**
+   Lovable emits this for policies targeting all roles. We rewrite to
+   `TO public`.
+
+3. **Missing `auth.identities` rows**
+   Lovable's export only dumps `auth.users`. Modern GoTrue (v2.158.1) requires
+   one matching `auth.identities` row per user with `provider='email'` for
+   password login. The restore script backfills these.
+
+4. **NULL token columns crash `/auth/v1/token` with HTTP 500**
+   GoTrue scans `confirmation_token`, `recovery_token`,
+   `email_change_token_new`, `email_change`, `phone_change`,
+   `phone_change_token`, `email_change_token_current`, `reauthentication_token`
+   into Go `string`s rather than `sql.NullString`. NULL → instant 500.
+   The restore script sets all of them to `''` (empty string) post-import.
+
+5. **Frontend shows "NETWORK_ERROR" despite backend returning 200**
+   Two separate causes hit us:
+   - **Empty `VITE_SUPABASE_PUBLISHABLE_KEY`** at build time → Supabase client
+     compiled with no key → all requests fail at the JS layer. Always set this
+     in `.env` *before* `docker compose up --build`.
+   - **Duplicate `Access-Control-Allow-Origin` headers** — both nginx AND the
+     upstream (GoTrue / PostgREST) add their own. Browser refuses
+     `*, https://your-host`. `nginx.conf` now `proxy_hide_header`s all
+     `Access-Control-*` from upstream so only nginx's single value remains.
+
+If a migration ever fails in a new way: check the GoTrue logs first with
+`docker logs --tail 200 revenue-engine 2>&1 | grep -iE 'level=error|fatal'`.
+The error message is almost always the literal cause.
+
 **Rollback / remove entirely**
 ```bash
 cd /root/revenue-engine
