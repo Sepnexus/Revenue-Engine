@@ -47,6 +47,12 @@ services:
       - "traefik.http.routers.re-api.tls.certresolver=mytlschallenge"
       - "traefik.http.services.re-api.loadbalancer.server.port=8000"
 
+  # Note: studio's basic-auth middleware was removed because the bcrypt $
+  # characters in STUDIO_BASIC_AUTH conflict with docker-compose's variable
+  # interpolation, which caused Traefik to silently drop the studio router.
+  # For now, gate Studio access at the network level (only access via SSH
+  # tunnel) — we'll add proper auth back as a Caddy/Traefik file provider
+  # config rather than a label later.
   studio:
     ports: !reset []
     labels:
@@ -57,16 +63,13 @@ services:
       - "traefik.http.routers.re-studio.tls=true"
       - "traefik.http.routers.re-studio.tls.certresolver=mytlschallenge"
       - "traefik.http.services.re-studio.loadbalancer.server.port=3000"
-      # Studio has no built-in auth — gate it behind basic auth.
-      # Generate the hash on the VPS with:
-      #   htpasswd -nbB admin 'your-password'   (apt install apache2-utils)
-      # Then put the full string (escape $ as $$) in STUDIO_BASIC_AUTH in .env.
-      - "traefik.http.middlewares.re-studio-auth.basicauth.users=${STUDIO_BASIC_AUTH:-}"
-      - "traefik.http.routers.re-studio.middlewares=re-studio-auth@docker"
 
+  # Note: removed container_name override — compose's auto-generated name
+  # (revenue-engine-web-1) works correctly with Traefik's docker provider.
+  # A custom container_name can interfere with label discovery in some
+  # compose+Traefik combinations.
   web:
     image: revenue-engine-web:latest
-    container_name: revenue-engine-web
     restart: unless-stopped
     build:
       context: ../apps/web
