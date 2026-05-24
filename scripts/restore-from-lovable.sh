@@ -83,6 +83,19 @@ GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA public TO anon, 
 GRANT EXECUTE                        ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
 SQL
 
+echo "==> Fixing NULL token columns in auth.users (GoTrue scans these into 'string', not NullString — NULLs crash the /token endpoint)"
+EXEC -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+UPDATE auth.users SET
+  confirmation_token         = COALESCE(confirmation_token, ''),
+  recovery_token             = COALESCE(recovery_token, ''),
+  email_change_token_new     = COALESCE(email_change_token_new, ''),
+  email_change               = COALESCE(email_change, ''),
+  phone_change               = COALESCE(phone_change, ''),
+  phone_change_token         = COALESCE(phone_change_token, ''),
+  email_change_token_current = COALESCE(email_change_token_current, ''),
+  reauthentication_token     = COALESCE(reauthentication_token, '');
+SQL
+
 echo "==> Backfilling auth.identities (Lovable export omits this; modern GoTrue needs it for password login)"
 EXEC -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 INSERT INTO auth.identities (
