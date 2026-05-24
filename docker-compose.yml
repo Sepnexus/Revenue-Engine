@@ -1,0 +1,42 @@
+services:
+  revenue-engine:
+    build:
+      context: .
+      args:
+        # VITE_* are baked into the static bundle at build time.
+        # Change here = rebuild required (docker compose up -d --build).
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+    image: revenue-engine:latest
+    container_name: revenue-engine
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - revenue_engine_pgdata:/var/lib/postgresql/data
+    networks:
+      - root_default
+    labels:
+      # ── Frontend (nginx serves Vite static files on :3000) ──
+      - "traefik.enable=true"
+      - "traefik.docker.network=root_default"
+      - "traefik.http.routers.re-app.rule=Host(`${PUBLIC_HOST}`)"
+      - "traefik.http.routers.re-app.entrypoints=web,websecure"
+      - "traefik.http.routers.re-app.tls=true"
+      - "traefik.http.routers.re-app.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.re-app.service=re-app-svc"
+      - "traefik.http.services.re-app-svc.loadbalancer.server.port=3000"
+      # ── Supabase API gateway (nginx on :54321) ──
+      - "traefik.http.routers.re-api.rule=Host(`${PUBLIC_API_HOST}`)"
+      - "traefik.http.routers.re-api.entrypoints=web,websecure"
+      - "traefik.http.routers.re-api.tls=true"
+      - "traefik.http.routers.re-api.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.re-api.service=re-api-svc"
+      - "traefik.http.services.re-api-svc.loadbalancer.server.port=54321"
+
+volumes:
+  revenue_engine_pgdata:
+
+networks:
+  root_default:
+    external: true

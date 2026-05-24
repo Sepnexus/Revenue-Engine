@@ -1,87 +1,61 @@
-# Metrics Loom — self-hosted monorepo
+# Revenue Engine
 
-Single repo that contains everything needed to run this product end-to-end
-on your own infrastructure: the frontend, the full Supabase stack
-(Postgres + Auth + REST + Storage + Studio), infra (docker-compose + Caddy),
-and the migration tooling for moving off Lovable without disrupting users.
+Self-hosted single-container deploy of the Revenue Engine app
+(Vite + React + shadcn frontend + Supabase backend), originally built
+on Lovable.
+
+The whole stack — Postgres, Supabase Auth (GoTrue), Supabase REST
+(PostgREST), nginx, and the compiled frontend — runs inside **one
+Docker container**. Same pattern as `webhook-buffer` and
+`ibuykc-dashboard` on the VPS.
 
 ## Layout
 
 ```
-apps/web/          Vite + React + shadcn frontend (from Lovable)
-supabase/          DB migrations, edge functions, config.toml
-infra/             docker-compose for the Supabase stack, Caddy for prod TLS
-scripts/           Migration + key-generation helpers
+.
+├── Dockerfile                  All-in-one image
+├── docker-compose.yml          Traefik labels + named volume
+├── .env.example                Required env vars (copy to .env)
+│
+├── docker/
+│   ├── start.sh                Entrypoint — boots Postgres + Auth + REST + nginx
+│   ├── init-db.sh              First-boot DB init (idempotent)
+│   ├── schema-init.sql         Roles + auth schema bootstrap
+│   ├── post-migrations.sql     Grants for PostgREST after migrations apply
+│   ├── nginx.conf              :3000 = static frontend, :54321 = Supabase gateway
+│   └── gen-keys.sh             Generates POSTGRES + JWT secrets
+│
+├── apps/web/                   Vite frontend (compiled into the image)
+├── supabase/migrations/        Lovable's DB migrations
+│
+├── scripts/
+│   └── restore-from-lovable.sh Wipes + reloads from a Lovable Cloud export
+│
+├── backups/                    Drop Lovable exports here (gitignored)
+└── docs/DEPLOY.md              Step-by-step VPS deploy
 ```
 
-## Quick start (local dev)
+## Quick start
 
-Prereqs: Docker, Bun (or npm), `psql` + `pg_dump` 15+, `openssl`, Node.
+See [`docs/DEPLOY.md`](./docs/DEPLOY.md) for the full step-by-step. TL;DR:
 
 ```bash
-make bootstrap         # creates infra/.env + apps/web/.env with fresh keys
-make dev               # boots Postgres, Auth, REST, Storage, Studio, mail
-make dev-web           # runs the Vite frontend at http://localhost:5173
+ssh root@<your-vps>
+git clone <this-repo> revenue-engine && cd revenue-engine
+bash docker/gen-keys.sh                  # outputs secrets, paste into .env
+cp .env.example .env && nano .env        # fill in secrets + your domain
+docker compose up -d --build             # build + start (3–6 min first time)
+./scripts/restore-from-lovable.sh        # after dropping Lovable exports into backups/
 ```
 
-Endpoints:
+Open `https://<your-domain>` and log in with your real Lovable password.
 
-| service | URL                     |
-|---------|-------------------------|
-| Frontend | http://localhost:5173  |
-| Supabase API (Kong) | http://localhost:8000 |
-| Supabase Studio | http://localhost:3000 |
-| Mail catcher (Inbucket) | http://localhost:9000 |
+## Why one container?
 
-`make psql` drops you into the local DB. `make logs` tails the stack.
-
-## Migrating off Lovable (the seamless path)
-
-The goal: users log into the new system with their existing email +
-password, with no reset and ideally no re-login.
-
-1. **Grab Lovable's JWT secret** (Supabase dashboard → Settings → API →
-   JWT Secret). Put it in `infra/.env` as `JWT_SECRET` *before* generating
-   anon/service-role keys. Reusing this secret keeps existing access tokens
-   valid through cutover.
-2. **Generate matching keys** for that secret:
-   ```bash
-   JWT_SECRET="<the-lovable-secret>" scripts/generate-keys.sh
-   ```
-   Paste the output into `infra/.env`.
-3. **Dump + restore**:
-   ```bash
-   SOURCE_DB_URL="postgres://postgres:<pwd>@db.<ref>.supabase.co:5432/postgres" \
-   TARGET_DB_URL="postgres://postgres:<pwd>@localhost:5432/postgres" \
-   make migrate-from-lovable
-   ```
-   This copies `auth`, `storage`, and `public` schemas — user IDs and
-   bcrypt password hashes come with them.
-4. **Sync storage files** (only if your app uploads files):
-   ```bash
-   scripts/sync-storage.sh   # see header of the script for env vars
-   ```
-5. **Point the frontend** at the self-hosted API by editing
-   `apps/web/.env` and rebuilding.
-
-For the real production cutover, do steps 3–5 against the VPS instead of
-localhost during a short maintenance window. See `docs/cutover.md` (TBD)
-for the full runbook.
-
-## Deploying to a VPS
-
-```bash
-# on the VPS, after cloning the repo:
-make bootstrap
-# edit infra/.env: real JWT secret, strong POSTGRES_PASSWORD, prod URLs,
-# real SMTP creds (no inbucket in prod)
-# edit infra/caddy/Caddyfile with your real domains
-make prod-up
-make build-web         # produces apps/web/dist; Caddy serves it from web-dist volume
-```
-
-## What's intentionally not here yet
-
-- CI workflow (`.github/workflows/deploy.yml`) — add once you've picked a deploy strategy (rsync, GHCR images, etc.)
-- Automated DB backups (cron pg_dump to S3) — easy to bolt on
-- Realtime + Edge Function containers — add to docker-compose when needed
+Trade-off:
+- **Pro:** dead simple to deploy alongside other Traefik-routed apps. Just
+  one set of labels, one container, one volume. No multi-container
+  network/label discovery quirks.
+- **Con:** Postgres, Auth, REST, and the frontend can't be scaled
+  independently. For a low-traffic internal dashboard like Revenue
+  Engine, that's the right trade-off.

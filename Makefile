@@ -1,70 +1,38 @@
 SHELL := /usr/bin/env bash
-COMPOSE := docker compose --env-file infra/.env -f infra/docker-compose.yml
-COMPOSE_PROD := $(COMPOSE) -f infra/docker-compose.prod.yml
 
 .DEFAULT_GOAL := help
 
 help:  ## Show this help
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*##/{printf "  \033[36m%-22s\033[0m %s\n",$$1,$$2}' $(MAKEFILE_LIST)
 
-# ---------- bootstrap ----------
+# ---------- local (laptop) ----------
 
-bootstrap:  ## Generate infra/.env + apps/web/.env from .example + fresh keys
-	@test -f infra/.env || cp infra/.env.example infra/.env
-	@test -f apps/web/.env || cp apps/web/.env.example apps/web/.env
-	@echo "Generating JWT keys..."
-	@scripts/generate-keys.sh > /tmp/ml-keys.env
-	@./scripts/_apply-keys.sh /tmp/ml-keys.env || ( \
-	   echo "Paste these into infra/.env:"; cat /tmp/ml-keys.env )
-	@echo "Done. Review infra/.env and apps/web/.env."
+build:  ## Build the image locally
+	docker compose build
 
-# ---------- local dev ----------
+up:  ## Start the container (uses .env)
+	docker compose up -d
 
-dev:  ## Start the full Supabase stack locally (with mail catcher)
-	$(COMPOSE) --profile dev up -d
-	@echo "API:    http://localhost:8000"
-	@echo "Studio: http://localhost:3000"
-	@echo "Mail:   http://localhost:9000"
+down:  ## Stop and remove container (KEEP volume)
+	docker compose down
 
-dev-web:  ## Run the Vite frontend (separately, so logs are visible)
-	cd apps/web && (test -d node_modules || bun install) && bun run dev
+nuke:  ## Stop + remove container AND volume (destroys local DB!)
+	docker compose down -v
 
-stop:  ## Stop the stack (keep volumes)
-	$(COMPOSE) stop
+logs:  ## Tail container logs
+	docker logs -f revenue-engine
 
-down:  ## Stop and remove containers (KEEP volumes)
-	$(COMPOSE) down
+psql:  ## Open psql inside the container
+	@source .env 2>/dev/null; \
+	docker exec -it -e PGPASSWORD="$$POSTGRES_PASSWORD" revenue-engine \
+	  psql -h 127.0.0.1 -U postgres -d "$${POSTGRES_DB:-revenue_engine}"
 
-nuke:  ## Stop + remove containers AND volumes (destroys local DB!)
-	$(COMPOSE) down -v
+# ---------- secrets ----------
 
-logs:  ## Tail all stack logs
-	$(COMPOSE) logs -f --tail=100
+keys:  ## Print fresh JWT/Postgres secrets (paste into .env)
+	@bash docker/gen-keys.sh
 
-psql:  ## Open a psql shell into the local DB
-	$(COMPOSE) exec db psql -U postgres -d postgres
+# ---------- data ----------
 
-# ---------- migration ----------
-
-migrate-from-lovable:  ## (Direct DB access) Dump Lovable Supabase and restore into TARGET (set SOURCE_DB_URL, TARGET_DB_URL)
-	./scripts/migrate-from-lovable.sh
-
-migrate-from-lovable-dry:  ## Same as above but skip the restore
-	DRY_RUN=1 ./scripts/migrate-from-lovable.sh
-
-restore-from-lovable:  ## (Lovable Cloud) Apply backups/{full-database,auth-users}-export.sql into the local stack
+restore:  ## Restore from backups/{full-database,auth-users}-export.sql
 	./scripts/restore-from-lovable.sh
-
-# ---------- production ----------
-
-prod-up:  ## Bring up the prod stack on the VPS
-	$(COMPOSE_PROD) up -d
-
-prod-down:
-	$(COMPOSE_PROD) down
-
-prod-logs:
-	$(COMPOSE_PROD) logs -f --tail=100
-
-build-web:  ## Build the frontend for production
-	cd apps/web && bun install && bun run build

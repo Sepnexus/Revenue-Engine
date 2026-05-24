@@ -1,208 +1,172 @@
-# Deploying Revenue Engine to the Hostinger VPS
+# Deploy Revenue Engine to the Hostinger VPS
 
-This guide assumes:
-- The VPS already runs `root-traefik-1`, `postgresql`, `root-n8n-1`, and
-  `webhook-buffer` containers (verified).
-- You have SSH access as `root@srv844822.hstgr.cloud`.
-- Traefik provisions Let's Encrypt certs via the `mytlschallenge` resolver
-  for any container labeled with a `Host(...)` rule on the
-  `root_default` Docker network.
+**One container.** Bundles Postgres + Supabase Auth (GoTrue) + REST (PostgREST)
++ nginx + the Vite frontend inside a single image. Same proven pattern as
+`webhook-buffer` and `ibuykc-dashboard` on this VPS.
 
-The deployment adds the following new containers on `root_default`:
-
-| container                | role                              | host                                            |
-|--------------------------|-----------------------------------|-------------------------------------------------|
-| `revenue-engine-db-1`    | Supabase Postgres                 | internal only (no host port)                    |
-| `revenue-engine-auth-1`  | GoTrue (auth)                     | internal                                        |
-| `revenue-engine-rest-1`  | PostgREST                         | internal                                        |
-| `revenue-engine-storage-1` | Supabase Storage                | internal                                        |
-| `revenue-engine-meta-1`  | postgres-meta                     | internal                                        |
-| `revenue-engine-kong-1`  | API gateway                       | `https://revenue-api.srv844822.hstgr.cloud`     |
-| `revenue-engine-studio-1`| Supabase Studio (admin UI)        | `https://revenue-studio.srv844822.hstgr.cloud` |
-| `revenue-engine-web`     | Vite frontend (built + served)    | `https://revenue.srv844822.hstgr.cloud`         |
-
-**Nothing else on the VPS gets restarted** — the existing `postgresql`,
-`n8n`, `webhook-buffer`, and `traefik` containers stay running as-is.
-We run our own `supabase/postgres` because the existing one is a vanilla
-Postgres that does not have the Supabase roles, extensions, or schemas.
+**Assumes** the VPS already runs `root-traefik-1` and exposes the
+`root_default` Docker network. Nothing else gets touched.
 
 ---
 
-## Step 1 — Point DNS at the VPS
-
-In your DNS provider, add three `A` records pointing at the VPS public IP:
-
-```
-revenue.srv844822.hstgr.cloud           A    <VPS_IP>
-revenue-api.srv844822.hstgr.cloud       A    <VPS_IP>
-revenue-studio.srv844822.hstgr.cloud    A    <VPS_IP>
-```
-
-If you already use a wildcard `*.srv844822.hstgr.cloud` record, skip this
-step — those subdomains will already resolve.
-
-Confirm before continuing:
+## Step 0 — Tear down the previous (multi-container) attempt
 
 ```bash
-dig revenue.srv844822.hstgr.cloud +short
-dig revenue-api.srv844822.hstgr.cloud +short
-dig revenue-studio.srv844822.hstgr.cloud +short
+ssh root@srv844822.hstgr.cloud
+cd /root/revenue-engine 2>/dev/null && \
+  docker compose --env-file infra/.env \
+    -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
+    down -v 2>/dev/null || true
+docker rm -f revenue-engine-web metrics-loom-db-1 metrics-loom-auth-1 \
+              metrics-loom-rest-1 metrics-loom-storage-1 metrics-loom-meta-1 \
+              metrics-loom-kong-1 metrics-loom-studio-1 metrics-loom-inbucket-1 \
+              metrics-loom-web-1 2>/dev/null || true
+docker volume rm metrics-loom_db-data metrics-loom_storage-data 2>/dev/null || true
+rm -rf /root/revenue-engine
 ```
-
-Each should return the VPS IP.
 
 ---
 
-## Step 2 — On your laptop: generate prod JWT keys
-
-Never reuse dev keys in production.
+## Step 1 — On the VPS: clone fresh & generate secrets
 
 ```bash
-cd ~/Desktop/NEw/metrics-loom
-JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n=' | cut -c1-64)" \
-  scripts/generate-keys.sh
+cd /root
+git clone https://github.com/Sepnexus/Revenue-Engine.git revenue-engine
+cd revenue-engine
+
+# Generate Postgres passwords + JWT keys (prints to screen)
+bash docker/gen-keys.sh
 ```
 
 Output looks like:
 
 ```
+POSTGRES_PASSWORD=...
+AUTHENTICATOR_PASSWORD=...
+AUTH_ADMIN_PASSWORD=...
 JWT_SECRET=...
 ANON_KEY=...
 SERVICE_ROLE_KEY=...
 ```
 
-Copy all three. You'll paste them into the VPS `.env` in Step 4.
+Copy that whole block — you'll paste it into `.env` next.
 
 ---
 
-## Step 3 — On the VPS: clone the repo
+## Step 2 — On the VPS: create `.env`
 
 ```bash
-ssh root@srv844822.hstgr.cloud
-cd /root
-git clone https://github.com/Sepnexus/Revenue-Engine.git revenue-engine
-cd revenue-engine
+cp .env.example .env
+nano .env
+```
+
+In nano:
+1. The first 4 lines (`PUBLIC_HOST`, `PUBLIC_API_HOST`, `SITE_URL`,
+   `VITE_SUPABASE_URL`) — leave as-is for `revenue.sepnexus.com` /
+   `revenue-api.sepnexus.com`. Change if you want different subdomains.
+2. **Replace the six `CHANGE_ME_*` lines** with the values from Step 1.
+
+Save: `Ctrl+O`, Enter, `Ctrl+X`.
+
+---
+
+## Step 3 — DNS
+
+Make sure these point at the VPS IP (`93.127.194.153`):
+
+```
+revenue.sepnexus.com       A    93.127.194.153
+revenue-api.sepnexus.com   A    93.127.194.153
+```
+
+```bash
+dig +short revenue.sepnexus.com
+dig +short revenue-api.sepnexus.com
 ```
 
 ---
 
-## Step 4 — On the VPS: create `.env`
+## Step 4 — On the VPS: build & start
 
 ```bash
-cp infra/.env.prod.example infra/.env
-# install htpasswd for the Studio basic-auth hash
-apt-get install -y apache2-utils
-# generate a bcrypt hash for Studio admin:
-htpasswd -nbB admin 'pick-a-strong-password'
-# copy the entire output line and paste below as STUDIO_BASIC_AUTH
-# IMPORTANT: in docker-compose, $ must be escaped as $$. Sed does it for you:
-htpasswd -nbB admin 'pick-a-strong-password' | sed -e 's/\$/\$\$/g'
-
-nano infra/.env
+docker compose up -d --build
 ```
 
-Fill in:
+First build takes **3–6 minutes** (downloads Node, Postgres, GoTrue,
+PostgREST + builds the Vite frontend). When it returns:
 
-| key                          | value                                                    |
-|------------------------------|----------------------------------------------------------|
-| `POSTGRES_PASSWORD`          | `openssl rand -base64 32` output (strong, no spaces)     |
-| `JWT_SECRET`                 | from Step 2                                              |
-| `ANON_KEY`                   | from Step 2                                              |
-| `SERVICE_ROLE_KEY`           | from Step 2                                              |
-| `STUDIO_BASIC_AUTH`          | the `$$`-escaped htpasswd output                         |
-| `SMTP_*`                     | your SMTP provider creds (Resend / SES / Postmark / etc.)|
+```bash
+docker logs -f revenue-engine
+```
 
-Save (Ctrl+O, Enter, Ctrl+X).
+Expected output, in order:
+```
+[init-db] fresh cluster — initializing
+[init-db] setting postgres superuser password and creating app database
+[init-db] bootstrapping roles + auth schema
+[init-db] running GoTrue migrations (creates auth.users etc.)
+[init-db] applying user migrations
+[init-db]   ↳ 20260225180143_...sql
+[init-db]   ...
+[init-db] init complete
+[start] booting Postgres
+[start] booting GoTrue (auth)
+[start] booting PostgREST
+[start] booting nginx (frontend on :3000, API gateway on :54321)
+[start] all 4 services up
+```
+
+Press `Ctrl+C` to stop tailing. The container keeps running.
 
 ---
 
-## Step 5 — On the VPS: boot the stack
+## Step 5 — Verify TLS + routing
+
+Wait ~30s for Traefik to provision Let's Encrypt certs, then:
 
 ```bash
-cd /root/revenue-engine
-docker compose \
-  --env-file infra/.env \
-  -f infra/docker-compose.yml \
-  -f infra/docker-compose.prod.yml \
-  up -d --build
+curl -I https://revenue.sepnexus.com/
+curl -I https://revenue-api.sepnexus.com/auth/v1/health
 ```
 
-First build takes 3–5 minutes (mostly the Vite build + image pulls).
-
-Watch the services come up:
-
-```bash
-docker compose --env-file infra/.env \
-  -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
-  ps
-```
-
-All services should be `Up` and `healthy` (auth/rest/storage may restart
-once during DB init — that's normal).
+Both should return `HTTP/2 200` (no `-k` needed).
 
 ---
 
-## Step 6 — Wait for Traefik certs (~30s) and verify
+## Step 6 — Restore your real Lovable data
 
-```bash
-curl -I https://revenue-api.srv844822.hstgr.cloud/auth/v1/health
-curl -I https://revenue.srv844822.hstgr.cloud/
-```
-
-Both should return `HTTP/2 200`. If you get a cert error, wait another
-minute and retry — Let's Encrypt provisioning sometimes takes a moment.
-
----
-
-## Step 7 — Migrate users + data from Lovable
-
-On your laptop, regenerate the two export files from Lovable (see
-[`LOVABLE_EXPORT.md`](./LOVABLE_EXPORT.md) — TODO) **as close as possible
-to the cutover time** so you don't lose recent writes.
-
-Copy the files up:
+From your **laptop**:
 
 ```bash
 scp ~/Downloads/full-database-export.sql \
-    root@srv844822.hstgr.cloud:/root/revenue-engine/backups/
-scp ~/Downloads/auth-users-export.sql \
+    ~/Downloads/auth-users-export.sql \
     root@srv844822.hstgr.cloud:/root/revenue-engine/backups/
 ```
 
-On the VPS:
+Then on the **VPS**:
 
 ```bash
 cd /root/revenue-engine
-DB_CONTAINER=revenue-engine-db-1 ./scripts/restore-from-lovable.sh
+./scripts/restore-from-lovable.sh
 ```
 
-You should see the same row counts you saw locally:
-
+You should see row counts like:
 ```
-auth.users          17
-organizations       10
-profiles            15
-kpi_periods         29
+auth.users      17
+organizations   10
+profiles        15
+kpi_periods     29
 ...
-rls_policies        48
+rls_policies    48
 ```
 
 ---
 
-## Step 8 — Smoke test as a real user
+## Step 7 — Log in
 
-Open `https://revenue.srv844822.hstgr.cloud` in your browser. Log in as
-`akshay@sepnexus.com` with your current Lovable password. You should land
-on the dashboard with your real organizations and KPI history.
-
-If something fails, check:
-
-```bash
-docker logs --tail 100 revenue-engine-auth-1
-docker logs --tail 100 revenue-engine-rest-1
-docker logs --tail 100 revenue-engine-kong-1
-docker logs --tail 100 revenue-engine-web
-```
+Open **https://revenue.sepnexus.com** in your browser. Log in as
+`akshay@sepnexus.com` with your real Lovable password. You should land
+on the dashboard with all your real orgs and KPI history.
 
 ---
 
@@ -214,47 +178,52 @@ When you push code changes to GitHub:
 ssh root@srv844822.hstgr.cloud
 cd /root/revenue-engine
 git pull
-docker compose --env-file infra/.env \
-  -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
-  up -d --build web   # rebuild only the frontend if that's all that changed
+docker compose up -d --build
 ```
 
-Schema changes (new files in `supabase/migrations/`) require either:
-- A fresh DB volume + restore (acceptable pre-cutover), or
-- Applying the migration manually via `psql` in the running `db` container.
+Postgres data survives (it's on the named volume `revenue_engine_pgdata`).
+Only the app code is rebuilt.
 
 ---
 
-## Rollback
+## Troubleshooting
 
-Take down the stack without touching anything else:
+**`docker compose up` says `network root_default not found`**
+The Traefik network is named differently on a fresh VPS. Run
+`docker network ls` and edit `docker-compose.yml` at the bottom.
 
+**Traefik 404 on the URL**
+Check the container joined the right network:
+```bash
+docker inspect revenue-engine --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+```
+Should show `root_default`.
+
+**SSL cert never appears**
+Confirm DNS resolves to the VPS and wait 60 seconds for first issuance:
+```bash
+dig revenue.sepnexus.com +short
+dig revenue-api.sepnexus.com +short
+```
+
+**Container restarts in a loop**
+```bash
+docker logs --tail 200 revenue-engine
+```
+Look for `[init-db]` errors (DB issue) or `[start]` errors (config).
+
+**Wipe and start fresh** (destroys the DB)
+```bash
+docker compose down -v
+docker compose up -d --build
+# then re-run scripts/restore-from-lovable.sh
+```
+
+**Rollback / remove entirely**
 ```bash
 cd /root/revenue-engine
-docker compose --env-file infra/.env \
-  -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
-  down
+docker compose down       # keeps data volume
+docker compose down -v    # also wipes the database
 ```
-
-This stops the 8 new containers and removes the network endpoints.
-Postgres data persists in the `revenue-engine_db-data` volume.
-To also wipe the data: add `-v` to the down command.
-
----
-
-## DNS cutover (the real switch)
-
-Until you're happy with the VPS instance, your real users keep using
-Lovable. The cutover is just a DNS / frontend change:
-
-1. **Day before:** Do a final dry-run of Steps 7–8 against fresh exports
-   to confirm the import still works.
-2. **Maintenance window (10–30 min):** Ask users to pause. Pull fresh
-   exports from Lovable. Run `restore-from-lovable.sh` again on the VPS.
-3. **Flip:** Wherever your real users currently log in (the Lovable URL),
-   either:
-   - Update their bookmark / shortcut to `https://revenue.srv844822.hstgr.cloud`, or
-   - Point your real domain (e.g. `app.sepnexus.com`) at the VPS and add
-     it to `PROD_WEB_HOST` + redeploy `web`.
-4. **Verify:** Have 2–3 real users log in and confirm their data shows.
-5. **Leave Lovable up for 1–2 weeks** as a safety net before tearing it down.
+Your other containers (`postgresql`, `n8n`, `traefik`, `webhook-buffer`,
+`ibuykc-dashboard`) are untouched.

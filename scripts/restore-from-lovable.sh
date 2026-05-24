@@ -1,93 +1,90 @@
 #!/usr/bin/env bash
-# Restore a Lovable Cloud export into a self-hosted Supabase.
+# Restore a Lovable Cloud export into the running single-container
+# Revenue Engine database. Run AFTER the container is up.
 #
-# Lovable's "Generate full database export" produces two files we work with:
+# Files expected at:
+#   backups/full-database-export.sql   (Lovable: "Generate full database export")
+#   backups/auth-users-export.sql      (Lovable: auth.users dump with bcrypt hashes)
 #
-#   backups/full-database-export.sql  — public schema (tables, data, RLS,
-#                                       functions, triggers, enums)
-#   backups/auth-users-export.sql     — auth.users rows including the
-#                                       bcrypt-hashed encrypted_password
-#
-# Both files are exported by Lovable in formats that need small fixes before
-# they restore cleanly into a stock Supabase Postgres:
-#
-#   1. auth.users export includes the `confirmed_at` column, which is a
-#      generated column in current GoTrue. We strip it from the INSERTs.
-#   2. The public-schema export emits `CREATE POLICY ... TO  USING ...`
-#      with an empty role list when the policy targets all roles. Postgres
-#      rejects that — we rewrite it as `TO public`.
-#
-# This script wipes the local public schema + auth.users, applies both
-# exports in the correct order (auth.users first so no profile-creation
-# trigger fires), and verifies the row counts.
-#
-# Usage:
-#   make restore-from-lovable
-# or:
+# Run:
 #   ./scripts/restore-from-lovable.sh
+#
+# Env (override if your container/db differs):
+#   APP_CONTAINER  default: revenue-engine
+#   POSTGRES_DB    read from .env if present, else revenue_engine
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUPS="$ROOT/backups"
-ENV_FILE="$ROOT/infra/.env"
-DB_CONTAINER="${DB_CONTAINER:-metrics-loom-db-1}"
+APP_CONTAINER="${APP_CONTAINER:-revenue-engine}"
+
+# Read POSTGRES_DB + POSTGRES_PASSWORD from .env if it exists
+if [ -f "$ROOT/.env" ]; then
+  POSTGRES_DB=$(grep -E '^POSTGRES_DB=' "$ROOT/.env" | cut -d= -f2- || true)
+  POSTGRES_PASSWORD=$(grep -E '^POSTGRES_PASSWORD=' "$ROOT/.env" | cut -d= -f2- || true)
+fi
+: "${POSTGRES_DB:=revenue_engine}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (in .env or env var)}"
 
 PUBLIC_SRC="$BACKUPS/full-database-export.sql"
 AUTH_SRC="$BACKUPS/auth-users-export.sql"
 
 test -f "$PUBLIC_SRC" || { echo "missing: $PUBLIC_SRC"; exit 1; }
 test -f "$AUTH_SRC"   || { echo "missing: $AUTH_SRC";   exit 1; }
-test -f "$ENV_FILE"   || { echo "missing: $ENV_FILE — run 'make bootstrap' first"; exit 1; }
 
-PW=$(grep ^POSTGRES_PASSWORD= "$ENV_FILE" | cut -d= -f2-)
-
-# ---- step 1: rewrite the two exports into clean .fixed.sql files ----
+# ── Fix Lovable's two export quirks before applying ───
 PUBLIC_FIX="$BACKUPS/full-database-export.fixed.sql"
 AUTH_FIX="$BACKUPS/auth-users-export.fixed.sql"
 
-# Strip the generated `confirmed_at` column from the auth.users INSERTs.
+# auth.users export includes `confirmed_at` (a generated column in current
+# GoTrue). Strip it from the INSERT column list and the matching value.
 sed -E \
   -e 's/, confirmed_at\)/)/g' \
   -e "s/, '[^']*'::timestamptz\\);/);/" \
   -e 's/, NULL\);$/);/' \
   "$AUTH_SRC" > "$AUTH_FIX"
 
-# Replace empty `TO  USING` / `TO  WITH` clauses with `TO public`.
+# Lovable emits `CREATE POLICY ... TO  USING ...` with an empty role list
+# for policies targeting all roles. Rewrite to `TO public`.
 sed -E \
   -e 's/ FOR ([A-Z]+) TO  USING/ FOR \1 TO public USING/g' \
   -e 's/ FOR ([A-Z]+) TO  WITH/ FOR \1 TO public WITH/g' \
   "$PUBLIC_SRC" > "$PUBLIC_FIX"
 
-# ---- step 2: wipe local DB ----
-echo "==> Wiping public schema and auth.users on $DB_CONTAINER"
-docker exec -i -e PGPASSWORD="$PW" "$DB_CONTAINER" \
-  psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+EXEC() {
+  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$APP_CONTAINER" \
+    psql -h 127.0.0.1 -U postgres -d "$POSTGRES_DB" "$@"
+}
+
+# ─── Wipe + restore ───────────────────────────────────
+echo "==> Wiping public schema and auth.users (no auth.users → no on_auth_user_created trigger fires)"
+EXEC -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 DELETE FROM auth.users;
 DROP SCHEMA IF EXISTS public CASCADE;
 CREATE SCHEMA public AUTHORIZATION postgres;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON SCHEMA public TO postgres, service_role;
+GRANT ALL   ON SCHEMA public TO postgres, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES    TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
 SQL
 
-# ---- step 3: restore auth.users (must be before public schema so the
-# on_auth_user_created trigger doesn't fire) ----
-echo "==> Importing auth.users"
-docker exec -i -e PGPASSWORD="$PW" "$DB_CONTAINER" \
-  psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$AUTH_FIX" >/dev/null
+echo "==> Importing auth.users (preserves bcrypt password hashes)"
+EXEC -v ON_ERROR_STOP=1 >/dev/null < "$AUTH_FIX"
 
-# ---- step 4: restore public schema (tables, data, RLS, functions, triggers) ----
 echo "==> Importing public schema + data"
-docker exec -i -e PGPASSWORD="$PW" "$DB_CONTAINER" \
-  psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PUBLIC_FIX" >/dev/null
+EXEC -v ON_ERROR_STOP=1 >/dev/null < "$PUBLIC_FIX"
 
-# ---- step 5: verify ----
+echo "==> Re-applying grants so PostgREST can serve the freshly-created tables"
+EXEC -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO anon, authenticated, service_role;
+GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT EXECUTE                        ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
+SQL
+
 echo "==> Row counts:"
-docker exec -i -e PGPASSWORD="$PW" "$DB_CONTAINER" \
-  psql -U postgres -d postgres -At -F $'\t' <<'SQL'
+EXEC -At -F $'\t' <<'SQL'
 SELECT 'auth.users',         count(*) FROM auth.users;
 SELECT 'organizations',      count(*) FROM public.organizations;
 SELECT 'profiles',           count(*) FROM public.profiles;
@@ -102,4 +99,4 @@ SELECT 'access_requests',    count(*) FROM public.access_requests;
 SELECT 'rls_policies',       count(*) FROM pg_policies WHERE schemaname='public';
 SQL
 
-echo "==> Done. Try a login at http://localhost:8000/auth/v1/token?grant_type=password"
+echo "==> Done. Try a real-user login at: $(grep ^SITE_URL "$ROOT/.env" | cut -d= -f2-)"

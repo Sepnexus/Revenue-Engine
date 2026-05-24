@@ -1,0 +1,25 @@
+# Don't ship these into the build context — keeps image small and avoids leaking
+.git
+.gitignore
+.dockerignore
+.env
+.env.local
+.env.*.local
+.DS_Store
+
+# node deps (rebuilt inside the image)
+**/node_modules
+**/dist
+**/.next
+
+# editor / OS
+.vscode
+.idea
+*.log
+
+# our local stuff
+backups/
+docs/
+README.md
+Makefile
+scripts/
