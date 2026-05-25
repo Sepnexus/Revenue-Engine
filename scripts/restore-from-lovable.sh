@@ -124,6 +124,9 @@ WHERE u.encrypted_password IS NOT NULL
   );
 SQL
 
+echo "==> Restoring PKs / FKs / UNIQUE constraints (Lovable's export omits these)"
+EXEC < "$ROOT/docker/restore-constraints.sql"
+
 echo "==> Row counts:"
 EXEC -At -F $'\t' <<'SQL'
 SELECT 'auth.users',         count(*) FROM auth.users;
