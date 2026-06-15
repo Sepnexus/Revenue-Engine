@@ -33,7 +33,8 @@ echo "[start] booting Postgres (with pg_cron + pg_net preloaded)"
 su -s /bin/bash postgres -c \
   "$PGBIN/postgres -D $PGDATA \
      -c shared_preload_libraries='pg_cron,pg_net' \
-     -c cron.database_name='${POSTGRES_DB}'" &
+     -c cron.database_name='${POSTGRES_DB}' \
+     -c pg_net.database_name='${POSTGRES_DB}'" &
 PG_PID=$!
 
 for i in $(seq 1 30); do

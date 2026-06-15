@@ -24,7 +24,7 @@ if [ -s "$PGDATA/PG_VERSION" ]; then
   # written to the volume — keeps rollback safe.
   su -s /bin/bash postgres -c \
     "$PGBIN/pg_ctl -D $PGDATA -l $PGDATA/migrate-server.log -w start \
-       -o \"-c shared_preload_libraries='pg_cron,pg_net' -c cron.database_name='${POSTGRES_DB:-revenue_engine}'\"" \
+       -o \"-c shared_preload_libraries='pg_cron,pg_net' -c cron.database_name='${POSTGRES_DB:-revenue_engine}' -c pg_net.database_name='${POSTGRES_DB:-revenue_engine}'\"" \
     >/dev/null
 
   # Enable the extensions in the app DB BEFORE migrations run, using their
@@ -69,7 +69,7 @@ EOF
 log "starting Postgres for init (with pg_cron + pg_net preloaded)"
 su -s /bin/bash postgres -c \
   "$PGBIN/pg_ctl -D $PGDATA -l $PGDATA/init-server.log -w start \
-     -o \"-c shared_preload_libraries='pg_cron,pg_net' -c cron.database_name='${POSTGRES_DB:-revenue_engine}'\""
+     -o \"-c shared_preload_libraries='pg_cron,pg_net' -c cron.database_name='${POSTGRES_DB:-revenue_engine}' -c pg_net.database_name='${POSTGRES_DB:-revenue_engine}'\""
 
 # Wait for it to actually accept queries
 for i in $(seq 1 30); do
