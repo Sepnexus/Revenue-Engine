@@ -51,7 +51,7 @@ const queryClient = new QueryClient({
 });
 
 function ClientGuard({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, role, loading } = useAuth();
   const [showTimeout, setShowTimeout] = useState(false);
   useEffect(() => {
     if (!loading) return;
@@ -70,6 +70,9 @@ function ClientGuard({ children }: { children: React.ReactNode }) {
     </div>
   );
   if (!user) return <Navigate to="/app/login" replace />;
+  // Admins have no org and shouldn't see the client app — send them to their
+  // own portal. Prevents the blank-org "whose account is this?" dashboard.
+  if (role === "super_admin") return <Navigate to="/admin/dashboard" replace />;
   return <>{children}</>;
 }
 
