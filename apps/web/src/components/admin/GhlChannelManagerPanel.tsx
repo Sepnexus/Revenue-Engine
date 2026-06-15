@@ -129,7 +129,7 @@ export default function GhlChannelManagerPanel({ orgId }: { orgId: string }) {
         if (e2) throw e2;
         const rr = r as any;
         if (!rr.ok) throw new Error(`Contacts: ${rr.error}`);
-        total += rr.rows_synced;
+        total += Number(rr.rows_synced) || 0;   // RPC returns a string — coerce so we add, not concatenate
         cursor = rr.next_cursor; cursorId = rr.next_cursor_id;
         if (page >= 200) break;
       } while (cursor);
