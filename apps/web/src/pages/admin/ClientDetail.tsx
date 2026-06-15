@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useImpersonation } from "@/contexts/ImpersonationContext";
 import { useAuditLog } from "@/hooks/useAuditLog";
 import AdminHeader from "@/components/AdminHeader";
+import GhlIntegrationSection from "@/components/admin/GhlIntegrationSection";
 import { G, BG, S1, S2, S3, B1, B2, TEXT, T2, T3, AMBER, RED } from "@/shared/kpi";
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -409,6 +410,9 @@ export default function ClientDetail() {
 
         {/* AI Usage */}
         <AIUsageSection orgId={orgId!} />
+
+        {/* GoHighLevel Integration */}
+        <GhlIntegrationSection orgId={orgId!} />
 
         <Link to={`/admin/clients/${orgId}/revenue-engine`} style={{ display: "block", background: G + "12", border: "1px solid " + G + "30", borderRadius: 12, padding: "18px 24px", color: G, fontSize: 16, fontWeight: 600, textDecoration: "none", textAlign: "center" }}>
           Open Revenue Engine Dashboard →
