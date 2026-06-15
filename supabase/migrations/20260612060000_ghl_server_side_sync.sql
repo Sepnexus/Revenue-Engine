@@ -841,5 +841,17 @@ END $$;
 REVOKE ALL ON FUNCTION public.ghl_cron_tick() FROM PUBLIC, anon, authenticated;
 
 -- ─── 8. Schedules (idempotent: same jobname replaces) ──────────────────────
-SELECT cron.schedule('ghl-sync-tick', '10 seconds', 'SELECT public.ghl_cron_tick()');
-SELECT cron.schedule('ghl-nightly-enqueue', '0 2 * * *', 'SELECT public.ghl_enqueue_nightly()');
+-- Guarded: only schedule when pg_cron is actually installed. On the
+-- single-container VPS (plain debian Postgres) pg_cron/pg_net aren't present
+-- yet, so this migration must replay cleanly without them — it creates the
+-- tables/functions (dormant) and skips scheduling. Once pg_cron is added to
+-- that image and this migration replays, the jobs get created then.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    PERFORM cron.schedule('ghl-sync-tick',        '10 seconds', 'SELECT public.ghl_cron_tick()');
+    PERFORM cron.schedule('ghl-nightly-enqueue',  '0 2 * * *',  'SELECT public.ghl_enqueue_nightly()');
+  ELSE
+    RAISE NOTICE 'pg_cron not installed — GHL sync schedules skipped (tables/functions still created)';
+  END IF;
+END $$;
