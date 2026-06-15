@@ -19,7 +19,25 @@ log() { echo "[init-db] $*"; }
 if [ -s "$PGDATA/PG_VERSION" ]; then
   log "existing Postgres cluster detected; replaying migrations (idempotent)"
 
-  su -s /bin/bash postgres -c "$PGBIN/pg_ctl -D $PGDATA -l $PGDATA/migrate-server.log -w start" >/dev/null
+  # Start with pg_cron + pg_net preloaded so CREATE EXTENSION + the
+  # cron-scheduling migrations succeed. Passed via -o (command line), never
+  # written to the volume — keeps rollback safe.
+  su -s /bin/bash postgres -c \
+    "$PGBIN/pg_ctl -D $PGDATA -l $PGDATA/migrate-server.log -w start \
+       -o \"-c shared_preload_libraries='pg_cron,pg_net' -c cron.database_name='${POSTGRES_DB:-revenue_engine}'\"" \
+    >/dev/null
+
+  # Enable the extensions in the app DB BEFORE migrations run, using their
+  # DEFAULT schemas (net, cron) — this is what our code references and matches
+  # local dev. A later Lovable migration also CREATE EXTENSION IF NOT EXISTS;
+  # creating them here first makes that a no-op so the schema stays correct.
+  log "  ensuring pg_net + pg_cron extensions"
+  su -s /bin/bash postgres -c \
+    "psql -h $SOCKETDIR -U postgres -d ${POSTGRES_DB:-revenue_engine} -v ON_ERROR_STOP=0 \
+       -c 'CREATE EXTENSION IF NOT EXISTS pg_net;' \
+       -c 'CREATE EXTENSION IF NOT EXISTS pg_cron;'" \
+    >/dev/null 2>&1 || log "  (extension creation reported an issue — continuing)"
+
   for f in /docker-init/migrations/*.sql; do
     [ -f "$f" ] || continue
     log "  ↳ $(basename "$f")"
@@ -48,9 +66,10 @@ listen_addresses = '127.0.0.1'
 unix_socket_directories = '$SOCKETDIR'
 EOF
 
-log "starting Postgres for init"
+log "starting Postgres for init (with pg_cron + pg_net preloaded)"
 su -s /bin/bash postgres -c \
-  "$PGBIN/pg_ctl -D $PGDATA -l $PGDATA/init-server.log -w start"
+  "$PGBIN/pg_ctl -D $PGDATA -l $PGDATA/init-server.log -w start \
+     -o \"-c shared_preload_libraries='pg_cron,pg_net' -c cron.database_name='${POSTGRES_DB:-revenue_engine}'\""
 
 # Wait for it to actually accept queries
 for i in $(seq 1 30); do
@@ -87,7 +106,16 @@ GOTRUE_API_PORT=9999 \
 GOTRUE_DB_DRIVER=postgres \
   /usr/local/bin/auth migrate
 
-log "applying user migrations (Lovable's 14 migration files)"
+log "ensuring pg_net + pg_cron extensions (default schemas net, cron)"
+# Non-fatal: a fresh deploy must still come up even if extension creation has
+# an issue — the app's auth/dashboards don't depend on these; only GHL does.
+su -s /bin/bash postgres -c \
+  "psql -h $SOCKETDIR -U postgres -d $POSTGRES_DB -v ON_ERROR_STOP=0 \
+     -c 'CREATE EXTENSION IF NOT EXISTS pg_net;' \
+     -c 'CREATE EXTENSION IF NOT EXISTS pg_cron;'" \
+  || log "  (extension creation reported an issue — continuing)"
+
+log "applying user migrations"
 for f in /docker-init/migrations/*.sql; do
   [ -f "$f" ] || continue
   log "  ↳ $(basename "$f")"

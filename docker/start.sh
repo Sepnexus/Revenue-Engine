@@ -24,8 +24,16 @@ PGDATA=/var/lib/postgresql/data
 /docker-init/init-db.sh
 
 # ─── Postgres ────────────────────────────────────────────
-echo "[start] booting Postgres"
-su -s /bin/bash postgres -c "$PGBIN/postgres -D $PGDATA" &
+# shared_preload_libraries is passed on the COMMAND LINE (not written to the
+# persisted postgresql.conf) so it's controlled by the image, not the volume.
+# Rollback-safe: reverting to an image without these .so files just drops the
+# flags — Postgres still starts. cron.database_name points pg_cron's worker at
+# the app DB.
+echo "[start] booting Postgres (with pg_cron + pg_net preloaded)"
+su -s /bin/bash postgres -c \
+  "$PGBIN/postgres -D $PGDATA \
+     -c shared_preload_libraries='pg_cron,pg_net' \
+     -c cron.database_name='${POSTGRES_DB}'" &
 PG_PID=$!
 
 for i in $(seq 1 30); do
