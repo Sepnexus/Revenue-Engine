@@ -253,11 +253,7 @@ export default function GhlIntegrationSection({ orgId }: { orgId: string }) {
     setMsg(null);
     setBusy("sync");
     try {
-      const pipelineIds = (org?.ghl_selected_pipeline_ids?.length ? org.ghl_selected_pipeline_ids : selectedPipelineIds) as string[];
-      if (!pipelineIds || pipelineIds.length === 0) {
-        setMsg({ kind: "err", text: "Pick at least one pipeline and Save first." });
-        return;
-      }
+      // No pipeline gating — the sync pulls all opportunities for the location.
       const { error } = await supabase.rpc("ghl_queue_sync", { p_org_id: orgId });
       if (error) throw error;
       setMsg({ kind: "info", text: "Sync queued. The server picks it up within ~10 seconds — progress below. You can close this tab; the sync keeps running." });
@@ -443,8 +439,8 @@ export default function GhlIntegrationSection({ orgId }: { orgId: string }) {
       {/* ─── Channel manager — per-channel source + stage rules ─── */}
       {hasSavedCreds && <GhlChannelManagerPanel orgId={orgId} />}
 
-      {/* ─── Sync controls (appear once at least one pipeline is saved) ─── */}
-      {(org?.ghl_selected_pipeline_ids?.length || 0) > 0 && (
+      {/* ─── Sync controls (available once credentials are saved) ─── */}
+      {hasSavedCreds && (
         <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid " + B1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <button
@@ -458,11 +454,7 @@ export default function GhlIntegrationSection({ orgId }: { orgId: string }) {
               <span style={{ fontSize: 12, color: T2 }}>
                 {syncJob.status === "queued"
                   ? "Queued — server picks it up within ~10s…"
-                  : `Running · ${syncJob.phase} · ${Number(syncJob.rows_contacts || 0).toLocaleString()} contacts · ${Number(syncJob.rows_opportunities || 0).toLocaleString()} opportunities${
-                      syncJob.phase === "opportunities" && Array.isArray(syncJob.pipeline_queue)
-                        ? ` · ${syncJob.pipeline_queue.length} pipeline(s) left`
-                        : ""
-                    }`}
+                  : `Running · ${syncJob.phase} · ${Number(syncJob.rows_contacts || 0).toLocaleString()} contacts · ${Number(syncJob.rows_opportunities || 0).toLocaleString()} opportunities`}
               </span>
             )}
           </div>
